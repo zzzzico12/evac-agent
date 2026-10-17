@@ -1,9 +1,11 @@
 """ツール単体の動作確認（Bedrock・AWS は不要。国土地理院のタイル取得にインターネット接続が必要）。"""
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ["ROUTES_ENABLED"] = "0"  # テストでは Amazon Location Service を呼ばない（直線の見積もりになる）
 
 import geo  # noqa: E402
 from tools import assess_home_risk, estimate_route, get_household_profile, save_evacuation_plan, search_shelters  # noqa: E402
@@ -160,6 +162,26 @@ def test_input_validation():
     assert "存在しません" in call(estimate_route, from_lat=36.39, from_lng=140.48, shelter_id="S9999", mode="walk")["error"]
 
 
+def test_road_route_is_used_for_plan():
+    import tools
+
+    h = homes()["H003"]
+    gokenn = geo.SHELTERS["S0002"]  # 五軒小学校（那珂川の対岸）
+    # 道路に沿った経路の代わりに、川を渡る折れ線を返す
+    path = [[h["lat"], h["lng"]], [h["lat"] - 0.008, h["lng"] - 0.004], [gokenn["lat"], gokenn["lng"]]]
+    original = geo.road_route
+    try:
+        geo.road_route = lambda *a, **k: {"distance_m": 2300, "duration_s": 3300, "coords": path, "approximate": False}
+        start_run(h, {"hazard": "landslide"})
+        r = call(estimate_route, from_lat=h["lat"], from_lng=h["lng"], shelter_id="S0002", mode="walk_slow")
+        assert r["road_route"] and r["minutes"] == 55 and r["distance_km"] == 2.3
+        assert r["rivers_to_cross"] == ["那珂川"] and any("橋で渡る" in w for w in r["warnings"])
+        saved = save(primary_shelter_id="S0002")
+        assert saved.get("saved") and ctx()["plan"]["primary_shelter"]["path"] == path
+    finally:
+        geo.road_route = original
+
+
 def test_route_and_bad_mode():
     h = homes()["H003"]
     r = call(estimate_route, from_lat=h["lat"], from_lng=h["lng"], shelter_id="S0002", mode="walk_slow")
@@ -179,5 +201,6 @@ if __name__ == "__main__":
     test_outdoor_is_temporary_refuge()
     test_landslide_plan_checks()
     test_input_validation()
+    test_road_route_is_used_for_plan()
     test_route_and_bad_mode()
     print("tools OK")

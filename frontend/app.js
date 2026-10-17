@@ -311,13 +311,16 @@ function drawRoute() {
     return;
   }
   const pts = [[h.lat, h.lng]];
+  // 道路に沿った経路（path）があればそれを、なければ自宅と避難所を結ぶ直線を描く
+  const line = (s) => (s.path?.length > 1 ? s.path : [[h.lat, h.lng], [s.lat, s.lng]]);
   if (plan.backup_shelter) {
-    L.polyline([[h.lat, h.lng], [plan.backup_shelter.lat, plan.backup_shelter.lng]], { color: '#0b3b5c', weight: 2.5, dashArray: '5 7', opacity: 0.7 })
+    L.polyline(line(plan.backup_shelter), { color: '#0b3b5c', weight: 2.5, dashArray: '5 7', opacity: 0.7 })
       .bindTooltip(`予備：${esc(plan.backup_shelter.name)}`).addTo(layers.route);
-    pts.push([plan.backup_shelter.lat, plan.backup_shelter.lng]);
+    pts.push(...line(plan.backup_shelter));
   }
   if (plan.primary_shelter) {
-    L.polyline([[h.lat, h.lng], [plan.primary_shelter.lat, plan.primary_shelter.lng]], { color: '#0f766e', weight: 5, opacity: 0.95 }).addTo(layers.route);
+    L.polyline(line(plan.primary_shelter), { color: '#0f766e', weight: 5, opacity: 0.95 }).addTo(layers.route);
+    pts.push(...line(plan.primary_shelter));
     L.circleMarker([plan.primary_shelter.lat, plan.primary_shelter.lng], { radius: 9, color: '#0f766e', weight: 3, fillColor: '#fff', fillOpacity: 1 })
       .bindTooltip(esc(plan.primary_shelter.name), { permanent: true, direction: 'top', offset: [0, -8] })
       .addTo(layers.route);

@@ -81,6 +81,14 @@ export class EvacAgentStack extends cdk.Stack {
       }),
     );
 
+    // 道路に沿った経路の見積もり（Amazon Location Service の Routes API）。リソースを作らずに呼べる
+    runtime.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['geo-routes:CalculateRoutes'],
+        resources: [`arn:aws:geo-routes:${this.region}::provider/default`],
+      }),
+    );
+
     // ---- エージェント呼び出し：Lambda Function URL（レスポンスストリーミング）----
     const agentProxy = new nodejs.NodejsFunction(this, 'AgentProxyFn', {
       entry: path.join(__dirname, '..', 'lambda', 'agent-proxy.ts'),

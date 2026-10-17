@@ -9,6 +9,7 @@
 import io
 import json
 import math
+import os
 import urllib.error
 import urllib.request
 from functools import lru_cache
@@ -45,7 +46,7 @@ LANDSLIDE_LAYERS = {
 }
 LANDSLIDE_LEVELS = {0: "区域外", 1: "土砂災害警戒区域", 2: "土砂災害特別警戒区域"}
 
-# 歩行・移動速度（km/h）。道路の迂回を考慮して直線距離に係数を掛ける。
+# 歩行・移動速度（km/h）。道路に沿った経路が取れないときは、直線距離に係数を掛けて道なりの目安にする
 SPEED_KMH = {
     "walk": 4.0,
     "walk_slow": 2.5,   # 高齢者・乳幼児連れ
@@ -222,3 +223,120 @@ def route_flood_exposure(lat1: float, lng1: float, lat2: float, lng2: float, sam
         "max_depth_rank": worst[0],
         "max_depth": worst[1],
     }
+
+
+# ---------------- 道路に沿った経路（Amazon Location Service の Routes API） ----------------
+ROUTES_ENABLED = os.environ.get("ROUTES_ENABLED", "1") == "1"
+_routes_client = None
+# Routes API の移動手段。自転車はないので徒歩の経路を使い、所要時間は自転車の速さで計算する
+_TRAVEL_MODE = {"walk": "Pedestrian", "walk_slow": "Pedestrian", "wheelchair": "Pedestrian", "bicycle": "Pedestrian", "car": "Car"}
+
+
+def _client():
+    global _routes_client
+    if _routes_client is None:
+        import boto3
+
+        _routes_client = boto3.client("geo-routes", region_name=os.environ.get("AWS_REGION", "ap-northeast-1"))
+    return _routes_client
+
+
+@lru_cache(maxsize=256)
+def road_route(lat1: float, lng1: float, lat2: float, lng2: float, mode: str) -> dict:
+    """道路に沿った経路の距離・所要時間・経路の線（[緯度, 経度] の並び）。
+    取得できないときは直線で代わりに見積もり、approximate を True にする。"""
+    speed = SPEED_KMH[mode]
+    if ROUTES_ENABLED:
+        try:
+            travel = _TRAVEL_MODE[mode]
+            options = {"Pedestrian": {"Speed": min(speed, 7.2)}} if travel == "Pedestrian" else {}
+            res = _client().calculate_routes(
+                Origin=[lng1, lat1],
+                Destination=[lng2, lat2],
+                TravelMode=travel,
+                TravelModeOptions=options,
+                LegGeometryFormat="Simple",
+                LegAdditionalFeatures=["Summary"],
+            )
+            coords, distance, duration = [], 0.0, 0.0
+            for leg in res["Routes"][0]["Legs"]:
+                coords += [[round(lat, 6), round(lng, 6)] for lng, lat in leg["Geometry"]["LineString"]]
+                overview = leg.get(f"{leg['Type']}LegDetails", {}).get("Summary", {}).get("Overview", {})
+                distance += overview.get("Distance", 0)
+                duration += overview.get("Duration", 0)
+            if mode == "bicycle" or not duration:
+                duration = distance / 1000 / speed * 3600
+            elif mode == "car":
+                # 避難のときは渋滞するので、渋滞を見込んだ速さより速くは見積もらない
+                duration = max(duration, distance / 1000 / speed * 3600)
+            return {"distance_m": distance, "duration_s": duration, "coords": coords, "approximate": False}
+        except Exception as e:  # 経路が取れなくても計画づくりは続ける
+            print(f"road_route failed: {type(e).__name__}: {e}")
+    distance = distance_m(lat1, lng1, lat2, lng2) * ROAD_FACTOR
+    return {
+        "distance_m": distance,
+        "duration_s": distance / 1000 / speed * 3600,
+        "coords": [[lat1, lng1], [lat2, lng2]],
+        "approximate": True,
+    }
+
+
+def _resample(coords: list, step_m: float = 50, max_points: int = 120) -> list:
+    """経路の線を一定間隔の点に並べ直す（ハザードマップを読む地点）。"""
+    if len(coords) < 2:
+        return coords
+    seg = [distance_m(*a, *b) for a, b in zip(coords, coords[1:])]
+    total = sum(seg) or 1
+    step = max(step_m, total / max_points)
+    out, acc, i = [coords[0]], 0.0, 0
+    target = step
+    for (a, b), d in zip(zip(coords, coords[1:]), seg):
+        while d > 0 and acc + d >= target:
+            t = (target - acc) / d
+            out.append([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+            target += step
+        acc += d
+    out.append(coords[-1])
+    return out
+
+
+def path_exposure(coords: list) -> dict:
+    """経路の線に沿って、浸水想定区域・土砂災害警戒区域を通る割合と最も危険な区分、橋で渡る川を調べる。"""
+    pts = _resample(coords)
+    depth = [_depth_class(lat, lng) for lat, lng in pts]
+    land = [landslide_rank(lat, lng)[0] for lat, lng in pts]
+    worst = max(depth, key=lambda c: c[0])
+    return {
+        "ratio_in_flood_zone": round(sum(1 for c in depth if c[0] > 0) / len(pts), 2),
+        "max_depth_rank": worst[0],
+        "max_depth": worst[1],
+        "ratio_in_landslide_zone": round(sum(1 for r in land if r > 0) / len(pts), 2),
+        "max_landslide_zone": LANDSLIDE_LEVELS[max(land)],
+        "rivers_on_path": rivers_on_path(coords),
+    }
+
+
+def rivers_on_path(coords: list) -> list[str]:
+    """経路の線が実際に横切る（橋で渡る）川の名前。"""
+    names = set()
+    lats = [c[0] for c in coords]
+    lngs = [c[1] for c in coords]
+    lo_lat, hi_lat, lo_lng, hi_lng = min(lats), max(lats), min(lngs), max(lngs)
+    for r in RIVERS:
+        y0, x0, y1, x1 = r["bbox"]
+        if y1 < lo_lat or y0 > hi_lat or x1 < lo_lng or x0 > hi_lng:
+            continue
+        pts = r["coords"]
+        for a, b in zip(coords, coords[1:]):
+            if any(_intersects(tuple(a), tuple(b), tuple(p), tuple(q)) for p, q in zip(pts, pts[1:])):
+                names.add(r["name"])
+                break
+    return sorted(names)
+
+
+def simplify_path(coords: list, max_points: int = 150) -> list:
+    """画面に送る経路の線を間引く。"""
+    if len(coords) <= max_points:
+        return coords
+    step = math.ceil(len(coords) / max_points)
+    return coords[::step] + ([coords[-1]] if (len(coords) - 1) % step else [])

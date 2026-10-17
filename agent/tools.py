@@ -261,7 +261,9 @@ MODE_LABEL = {"walk": "徒歩", "walk_slow": "ゆっくり徒歩", "wheelchair":
 @tool
 @ui_tool("避難経路を見積もり")
 def estimate_route(from_lat: float, from_lng: float, shelter_id: str, mode: str) -> dict:
-    """自宅から避難所までの距離・所要時間と、直線経路上の浸水想定区域・土砂災害警戒区域の通過状況、渡らなければならない川を見積もる。
+    """出発地から避難所までの、道路に沿った経路（Amazon Location Service）の距離・所要時間と、
+    その経路が浸水想定区域・土砂災害警戒区域を通る割合、橋で渡る川を見積もる。
+    災害時の通行止めや冠水は反映されない。
 
     Args:
         from_lat: 出発地の緯度
@@ -274,34 +276,39 @@ def estimate_route(from_lat: float, from_lng: float, shelter_id: str, mode: str)
     s = geo.SHELTERS.get(shelter_id)
     if not s:
         raise ValueError(f"避難所ID {shelter_id} は存在しません。search_shelters の結果にある id を指定してください")
-    km = geo.distance_m(from_lat, from_lng, s["lat"], s["lng"]) * geo.ROAD_FACTOR / 1000
-    minutes = round(km / geo.SPEED_KMH[mode] * 60)
-    exposure = geo.route_flood_exposure(from_lat, from_lng, s["lat"], s["lng"])
-    landslide = geo.route_landslide_exposure(from_lat, from_lng, s["lat"], s["lng"])
-    rivers = geo.rivers_crossed(from_lat, from_lng, s["lat"], s["lng"])
+    route = geo.road_route(from_lat, from_lng, s["lat"], s["lng"], mode)
+    exposure = geo.path_exposure(route["coords"])
+    # 計画を保存するときに地図へ描けるよう、経路の線を覚えておく
+    ctx().setdefault("routes", {})[shelter_id] = route
+    km = route["distance_m"] / 1000
+    minutes = round(route["duration_s"] / 60)
+    rivers = exposure["rivers_on_path"]
     warnings = []
+    if route["approximate"]:
+        warnings.append("道路に沿った経路が取れなかったため、直線距離から見積もった目安")
     if rivers:
-        warnings.append(f"{'・'.join(rivers)}を渡る必要がある。洪水のときに増水した川や橋に近づくのは危険")
+        warnings.append(f"この経路は{'・'.join(rivers)}を橋で渡る。洪水のときに増水した川や橋に近づくのは危険")
     if exposure["ratio_in_flood_zone"] > 0:
         warnings.append(
             f"経路の約{int(exposure['ratio_in_flood_zone'] * 100)}%が浸水想定区域"
-            f"（最大 {exposure['max_depth']}）を通過。浸水が始まる前に抜けること"
+            f"（最大 {exposure['max_depth']}）を通る。浸水が始まる前に抜けること"
         )
-    if landslide["ratio_in_landslide_zone"] > 0:
+    if exposure["ratio_in_landslide_zone"] > 0:
         warnings.append(
-            f"経路の約{int(landslide['ratio_in_landslide_zone'] * 100)}%が{landslide['max_landslide_zone']}を通過。"
+            f"経路の約{int(exposure['ratio_in_landslide_zone'] * 100)}%が{exposure['max_landslide_zone']}を通る。"
             "崖や沢のそばの道はできるだけ避けること"
         )
     if mode == "car":
         warnings.append("道路が冠水（水深30cm以上）すると車は走行不能。早めの出発が前提")
     return {
-        "summary": f"{s['name']}まで約{km:.1f}km・{MODE_LABEL[mode]}で約{minutes}分" + ("（要注意）" if warnings else ""),
+        "summary": f"{s['name']}まで道なりに約{km:.1f}km・{MODE_LABEL[mode]}で約{minutes}分" + ("（要注意）" if warnings else ""),
         "shelter_id": shelter_id,
         "distance_km": round(km, 1),
         "minutes": minutes,
         "mode": mode,
+        "road_route": not route["approximate"],
         "route_max_depth": exposure["max_depth"],
-        "route_landslide_zone": landslide["max_landslide_zone"],
+        "route_landslide_zone": exposure["max_landslide_zone"],
         "rivers_to_cross": rivers,
         "warnings": warnings,
     }
@@ -360,7 +367,15 @@ def save_evacuation_plan(
 
     def shelter(sid: str):
         s = geo.SHELTERS.get(sid)
-        return {"id": sid, "city": s["city"], "name": s["name"], "lat": s["lat"], "lng": s["lng"]} if s else None
+        if not s:
+            return None
+        # 地図に描く経路の線。estimate_route で見積もった経路がなければ、ここで徒歩の経路を取る
+        route = state.get("routes", {}).get(sid)
+        origin = state["household"] or {}
+        if route is None and "lat" in origin:
+            route = geo.road_route(origin["lat"], origin["lng"], s["lat"], s["lng"], "walk")
+        path = geo.simplify_path(route["coords"]) if route and not route["approximate"] else None
+        return {"id": sid, "city": s["city"], "name": s["name"], "lat": s["lat"], "lng": s["lng"], "path": path}
 
     plan = {
         "decision": decision,

@@ -22,6 +22,7 @@ def start_run(household: dict | None, alert: dict | None, sink=print) -> dict:
         "tool_calls": 0,  # ツール呼び出しの回数
         "rejections": 0,  # 計画の保存を差し戻した回数
         "abort": None,  # 中止する理由（入っていたら次のモデル呼び出しで止める）
+        "routes": {},  # estimate_route で見積もった経路（避難所ID → 経路）。計画の地図に使う
     }
     _run.set(state)
     return state
