@@ -1,0 +1,6 @@
+node_modules/
+cdk.out/
+outputs.json
+.venv/
+__pycache__/
+.DS_Store

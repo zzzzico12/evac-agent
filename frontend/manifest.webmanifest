@@ -1,0 +1,16 @@
+{
+  "name": "避難計画エージェント",
+  "short_name": "避難計画",
+  "description": "警報をきっかけに、AIエージェントが家族構成に合わせた避難計画を組み立てます。世帯情報と計画はこの端末だけに保存します。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f1419",
+  "theme_color": "#0f1419",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

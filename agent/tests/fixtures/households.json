@@ -1,0 +1,363 @@
+[
+  {
+    "id": "H001",
+    "name": "那珂家",
+    "address": "水戸市渡里町（架空）",
+    "lat": 36.4085,
+    "lng": 140.4402,
+    "city": "水戸市",
+    "language": "ja",
+    "home": {
+      "structure": "木造2階建て",
+      "floors": 2
+    },
+    "members": [
+      {
+        "name": "那珂 健一",
+        "relation": "父",
+        "age": 42,
+        "mobility": "自立",
+        "notes": "運転可。平日日中は市内勤務"
+      },
+      {
+        "name": "那珂 美咲",
+        "relation": "母",
+        "age": 40,
+        "mobility": "自立",
+        "notes": "運転可"
+      },
+      {
+        "name": "那珂 ひなた",
+        "relation": "長女",
+        "age": 3,
+        "mobility": "乳幼児",
+        "notes": "紙おむつ使用。食物アレルギー（卵）"
+      },
+      {
+        "name": "那珂 トミ",
+        "relation": "祖母",
+        "age": 78,
+        "mobility": "車いす",
+        "notes": "要介護2。降圧剤を毎朝服用"
+      }
+    ],
+    "pets": [
+      {
+        "type": "犬",
+        "name": "こむぎ",
+        "notes": "柴犬・ケージあり"
+      }
+    ],
+    "vehicles": [
+      {
+        "type": "普通乗用車",
+        "seats": 5,
+        "notes": "車いすを積載可"
+      }
+    ],
+    "contacts": [
+      {
+        "name": "那珂 誠",
+        "relation": "叔父（つくば市在住）"
+      }
+    ]
+  },
+  {
+    "id": "H002",
+    "name": "佐藤 ハナ さん",
+    "address": "水戸市飯富町（架空）",
+    "lat": 36.4251,
+    "lng": 140.4175,
+    "city": "水戸市",
+    "language": "ja",
+    "home": {
+      "structure": "木造平屋",
+      "floors": 1
+    },
+    "members": [
+      {
+        "name": "佐藤 ハナ",
+        "relation": "本人",
+        "age": 82,
+        "mobility": "歩行がゆっくり（杖）",
+        "notes": "一人暮らし。糖尿病でインスリン注射。耳が遠く防災無線が聞き取りにくい"
+      }
+    ],
+    "pets": [],
+    "vehicles": [],
+    "contacts": [
+      {
+        "name": "鈴木 一郎",
+        "relation": "近所の避難支援者（避難行動要支援者名簿の登録支援者）"
+      },
+      {
+        "name": "佐藤 恵子",
+        "relation": "長女（東京都在住）"
+      }
+    ]
+  },
+  {
+    "id": "H003",
+    "name": "グエン家",
+    "address": "水戸市青柳町（架空）",
+    "lat": 36.3947,
+    "lng": 140.4805,
+    "city": "水戸市",
+    "language": "vi",
+    "home": {
+      "structure": "鉄骨2階建てアパートの1階",
+      "floors": 1
+    },
+    "members": [
+      {
+        "name": "Nguyen Van Minh",
+        "relation": "夫",
+        "age": 29,
+        "mobility": "自立",
+        "notes": "ベトナム出身。日本語は簡単な会話のみ。市内の工場勤務"
+      },
+      {
+        "name": "Tran Thi Lan",
+        "relation": "妻",
+        "age": 27,
+        "mobility": "自立",
+        "notes": "ベトナム出身。日本語はひらがなが少し読める"
+      },
+      {
+        "name": "Nguyen Bao An",
+        "relation": "長男",
+        "age": 0,
+        "mobility": "乳幼児",
+        "notes": "生後6か月。母乳とミルク併用"
+      }
+    ],
+    "pets": [],
+    "vehicles": [
+      {
+        "type": "自転車",
+        "seats": 1,
+        "notes": ""
+      }
+    ],
+    "contacts": [
+      {
+        "name": "水戸市国際交流協会",
+        "relation": "生活相談窓口"
+      }
+    ]
+  },
+  {
+    "id": "H004",
+    "name": "高橋家",
+    "address": "水戸市見川町（架空）",
+    "lat": 36.358,
+    "lng": 140.4329,
+    "city": "水戸市",
+    "language": "ja",
+    "home": {
+      "structure": "木造2階建て",
+      "floors": 2
+    },
+    "members": [
+      {
+        "name": "高橋 修",
+        "relation": "父",
+        "age": 48,
+        "mobility": "自立",
+        "notes": ""
+      },
+      {
+        "name": "高橋 由美",
+        "relation": "母",
+        "age": 46,
+        "mobility": "自立",
+        "notes": ""
+      },
+      {
+        "name": "高橋 蓮",
+        "relation": "長男",
+        "age": 14,
+        "mobility": "自立",
+        "notes": "中学生"
+      }
+    ],
+    "pets": [
+      {
+        "type": "猫",
+        "name": "モモ",
+        "notes": ""
+      }
+    ],
+    "vehicles": [
+      {
+        "type": "普通乗用車",
+        "seats": 5,
+        "notes": ""
+      }
+    ],
+    "contacts": []
+  },
+  {
+    "id": "H005",
+    "name": "石毛家",
+    "address": "常総市水海道宝町（架空）",
+    "lat": 36.0175,
+    "lng": 139.9909,
+    "city": "常総市",
+    "language": "ja",
+    "home": {
+      "structure": "木造2階建て",
+      "floors": 2
+    },
+    "members": [
+      {
+        "name": "石毛 大輔",
+        "relation": "父",
+        "age": 44,
+        "mobility": "自立",
+        "notes": "つくば市へ通勤。運転可"
+      },
+      {
+        "name": "石毛 由香",
+        "relation": "母",
+        "age": 41,
+        "mobility": "自立",
+        "notes": "運転可"
+      },
+      {
+        "name": "石毛 陽斗",
+        "relation": "長男",
+        "age": 10,
+        "mobility": "自立",
+        "notes": "小学4年生。ぜんそく（吸入薬）"
+      },
+      {
+        "name": "石毛 結衣",
+        "relation": "長女",
+        "age": 7,
+        "mobility": "自立",
+        "notes": "小学1年生"
+      },
+      {
+        "name": "石毛 清",
+        "relation": "祖父",
+        "age": 85,
+        "mobility": "歩行がゆっくり",
+        "notes": "軽い認知症。慣れない場所で混乱しやすい"
+      }
+    ],
+    "pets": [],
+    "vehicles": [
+      {
+        "type": "普通乗用車",
+        "seats": 5,
+        "notes": ""
+      },
+      {
+        "type": "軽自動車",
+        "seats": 4,
+        "notes": ""
+      }
+    ],
+    "contacts": [
+      {
+        "name": "石毛 和子",
+        "relation": "叔母（つくばみらい市在住）"
+      }
+    ]
+  },
+  {
+    "id": "H006",
+    "name": "大森家",
+    "address": "常陸大宮市辰ノ口（架空）",
+    "lat": 36.586,
+    "lng": 140.4219,
+    "city": "常陸大宮市",
+    "language": "ja",
+    "home": {
+      "structure": "木造2階建て（寝室は1階）",
+      "floors": 2
+    },
+    "members": [
+      {
+        "name": "大森 茂",
+        "relation": "夫",
+        "age": 78,
+        "mobility": "自立（長距離の歩行は難しい）",
+        "notes": "人工透析（月・水・金）。市外の透析クリニックに通院"
+      },
+      {
+        "name": "大森 和江",
+        "relation": "妻",
+        "age": 75,
+        "mobility": "自立",
+        "notes": "軽自動車を運転"
+      }
+    ],
+    "pets": [
+      {
+        "type": "猫",
+        "name": "タマ",
+        "notes": "外飼い"
+      }
+    ],
+    "vehicles": [
+      {
+        "type": "軽自動車",
+        "seats": 4,
+        "notes": ""
+      }
+    ],
+    "contacts": [
+      {
+        "name": "大森 健",
+        "relation": "長男（日立市在住）"
+      },
+      {
+        "name": "透析クリニック",
+        "relation": "かかりつけ医療機関"
+      }
+    ]
+  },
+  {
+    "id": "H007",
+    "name": "久慈家",
+    "address": "久慈郡大子町（架空）",
+    "lat": 36.77,
+    "lng": 140.348,
+    "city": "大子町",
+    "language": "ja",
+    "home": {
+      "structure": "木造2階建て（裏が斜面）",
+      "floors": 2
+    },
+    "members": [
+      {
+        "name": "久慈 正男",
+        "relation": "夫",
+        "age": 81,
+        "mobility": "歩行がゆっくり",
+        "notes": "心臓病（ペースメーカー）"
+      },
+      {
+        "name": "久慈 澄子",
+        "relation": "妻",
+        "age": 77,
+        "mobility": "自立",
+        "notes": "運転はしない"
+      }
+    ],
+    "pets": [],
+    "vehicles": [],
+    "contacts": [
+      {
+        "name": "久慈 隆",
+        "relation": "長男（水戸市在住）"
+      },
+      {
+        "name": "地区の消防団",
+        "relation": "避難支援"
+      }
+    ]
+  }
+]

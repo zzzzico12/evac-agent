@@ -1,0 +1,7 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/app.ts",
+  "context": {
+    "modelId": "global.anthropic.claude-opus-4-6-v1",
+    "thinkingDisplay": "summarized"
+  }
+}

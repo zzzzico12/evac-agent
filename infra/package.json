@@ -1,0 +1,23 @@
+{
+  "name": "evac-agent-infra",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "cdk": "cdk",
+    "deploy": "cdk deploy --require-approval never --outputs-file outputs.json",
+    "destroy": "cdk destroy --force"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "aws-cdk": "2.1145.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1152.0",
+    "@types/aws-lambda": "^8.10.164",
+    "aws-cdk-lib": "2.273.0",
+    "constructs": "^10.4.0",
+    "esbuild": "^0.28.2"
+  }
+}

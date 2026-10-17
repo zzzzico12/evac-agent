@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>避難計画エージェント</title>
+  <meta name="description" content="警報をもとに、AIエージェントが家族構成に合わせた避難計画を組み立てます。家族の情報と計画はこの端末だけに保存します。" />
+  <meta name="theme-color" content="#0b3b5c" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" width="28" height="28" />
+      <span>避難計画エージェント</span>
+    </div>
+    <span class="bar-note">家族の情報と計画は、この端末にだけ保存されます</span>
+  </header>
+
+  <main class="main">
+    <aside class="panel" id="panel">
+      <section class="block step" id="familyBlock">
+        <div class="block-head">
+          <h2><span class="step-no">1</span>場所を登録</h2>
+        </div>
+        <div id="householdList" class="families"></div>
+        <div class="place-actions">
+          <button class="secondary" id="useHere">いまいる場所</button>
+          <button class="secondary" id="addHousehold">住所を登録</button>
+        </div>
+      </section>
+
+      <section class="block step" id="actionBlock">
+        <div class="block-head">
+          <h2><span class="step-no">2</span>警報が出たら</h2>
+        </div>
+        <button class="primary wide" id="fetchAlert">警報を取得して計画を作る</button>
+        <p class="hint" id="fetchHint"></p>
+        <div class="alert" id="alertBanner" hidden></div>
+      </section>
+
+      <section class="block" id="progressBlock" hidden>
+        <div class="block-head">
+          <h2>エージェント</h2>
+          <span class="muted" id="progressTarget"></span>
+        </div>
+        <ol class="steps" id="steps"></ol>
+      </section>
+
+      <section class="block step" id="planBlock" hidden>
+        <div class="block-head">
+          <h2><span class="step-no">3</span>避難計画</h2>
+          <span class="muted" id="planTarget"></span>
+        </div>
+        <div id="plan"></div>
+      </section>
+
+      <section class="block" id="nearbyBlock" hidden>
+        <div class="block-head">
+          <h2>近くの避難所</h2>
+          <span class="muted" id="nearbySub"></span>
+        </div>
+        <ol class="nearby" id="nearbyList"></ol>
+      </section>
+    </aside>
+
+    <section class="map-wrap">
+      <div id="map"></div>
+    </section>
+  </main>
+
+  <footer class="credit">
+    避難所：茨城県 避難施設情報（N2EM / G空間情報センター、2019年時点）　浸水想定・地図：国土地理院　河川：© OpenStreetMap contributors　警報はデモ用の疑似データです。実際の避難はお住まいの市町村の防災情報に従ってください。
+  </footer>
+
+  <dialog id="alertDialog" class="sheet">
+    <form method="dialog">
+      <div class="dialog-head">
+        <span class="demo-tag">デモ</span>
+        <h2 tabindex="-1" autofocus>デモ用の警報を取得</h2>
+      </div>
+      <p class="demo-note">これは実際の気象庁の警報ではありません。災害の種類と警戒レベルを選ぶと、登録した場所の地域に疑似警報を出し、避難計画を作ります。</p>
+      <div class="target-box">
+        <span class="muted">計画を作る場所</span>
+        <span class="target-name" id="alertTarget"></span>
+        <small class="muted" id="areaRiver"></small>
+      </div>
+      <div class="input">災害の種類
+        <div class="seg" id="hazards"></div>
+      </div>
+      <div class="input">警戒レベル
+        <div class="seg" id="levels"></div>
+      </div>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" class="secondary" id="cancelAlert">キャンセル</button>
+        <button type="submit" class="primary" id="confirmAlert">実行</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="hereDialog" class="sheet">
+    <form method="dialog">
+      <div class="dialog-head">
+        <h2 tabindex="-1" autofocus>いまいる場所を登録</h2>
+        <p class="muted">外出先などで、いまいる場所から避難する計画を作るときに使います。この端末にだけ保存されます。</p>
+      </div>
+      <div class="here">
+        <span class="here-text" id="hereText">場所がまだ決まっていません</span>
+        <span class="here-actions">
+          <button type="button" class="secondary" id="useGps">現在地を使う</button>
+          <button type="button" class="secondary" id="pickOnMap">地図で指定</button>
+        </span>
+      </div>
+      <details class="more">
+        <summary>あなたについて（任意）</summary>
+        <div class="grid3">
+          <label class="input">年齢<input id="selfAge" type="number" min="0" max="120" placeholder="40"></label>
+          <label class="input">移動<select id="selfMobility"></select></label>
+          <label class="input">言語<select id="selfLanguage"></select></label>
+        </div>
+        <label class="input">配慮が必要なこと<input id="selfNotes" placeholder="例：持病の薬を毎日飲む、ベビーカーで乳児と一緒"></label>
+      </details>
+      <div class="dialog-actions">
+        <button type="button" class="danger-link" id="deleteHere">削除</button>
+        <span class="spacer"></span>
+        <button type="button" class="secondary" id="cancelHere">キャンセル</button>
+        <button type="submit" class="primary" id="saveHere">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="pick-hint" id="pickHint" hidden>地図をタップして、いまいる場所を指定してください<button class="link" id="cancelPick">やめる</button></div>
+
+  <dialog id="editor">
+    <form method="dialog">
+      <div class="dialog-head">
+        <h2>住所の登録</h2>
+        <p class="muted">自宅などの住所と、そこに住む家族の情報を登録します。この端末にだけ保存され、計画を作るときにだけエージェントへ送られます。</p>
+      </div>
+      <label class="input">名前<input name="hhname" required placeholder="例：自宅、実家"></label>
+      <label class="input">住所
+        <span class="row"><input name="address" required placeholder="例：茨城県水戸市三の丸1丁目"><button type="button" class="secondary" id="geocodeBtn">位置を取得</button></span>
+      </label>
+      <small id="geoMsg" class="muted"></small>
+      <div class="grid3">
+        <label class="input">市町村<input name="city" list="cityList" required></label>
+        <label class="input">緯度<input name="lat" type="number" step="any" required></label>
+        <label class="input">経度<input name="lng" type="number" step="any" required></label>
+      </div>
+      <datalist id="cityList"></datalist>
+      <div class="grid3">
+        <label class="input">住宅<input name="structure" placeholder="木造2階建て"></label>
+        <label class="input">住める最上階<input name="floors" type="number" min="1" max="60" required></label>
+        <label class="input">家族の言語<select name="language"></select></label>
+      </div>
+      <fieldset>
+        <legend>家族構成</legend>
+        <table id="members">
+          <thead><tr><th>続柄</th><th>年齢</th><th>移動</th><th>メモ</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" class="link" id="addMember">家族を追加</button>
+      </fieldset>
+      <div class="grid3">
+        <label class="input">ペット<textarea name="pets" rows="2" placeholder="1行に1匹（例：犬 ケージあり）"></textarea></label>
+        <label class="input">移動手段<textarea name="vehicles" rows="2" placeholder="1行に1台（例：普通乗用車）"></textarea></label>
+        <label class="input">連絡先<textarea name="contacts" rows="2" placeholder="1行に1人（例：鈴木一郎 避難支援者）"></textarea></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="danger-link" id="deleteHousehold">削除</button>
+        <span class="spacer"></span>
+        <button type="button" class="secondary" id="cancelEdit">キャンセル</button>
+        <button type="submit" class="primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="app.js"></script>
+</body>
+</html>
