@@ -97,6 +97,27 @@ def _problem(s: dict, hazard: str, lat: float, lng: float) -> str:
     return ""
 
 
+def _route_for(sid: str) -> dict | None:
+    """避難先までの道路に沿った経路。estimate_route で見積もった経路があればそれを、なければ徒歩の経路を取って覚えておく。"""
+    state = ctx()
+    origin = state["household"] or {}
+    s = geo.SHELTERS.get(sid)
+    if not s or "lat" not in origin:
+        return None
+    routes = state.setdefault("routes", {})
+    if sid not in routes:
+        routes[sid] = geo.road_route(origin["lat"], origin["lng"], s["lat"], s["lng"], "walk")
+    return routes[sid]
+
+
+def _road_rivers(sid: str) -> list[str]:
+    """道路に沿った経路が橋で渡る川（経路が取れず直線の見積もりのときは空）。"""
+    route = _route_for(sid)
+    if not route or route["approximate"]:
+        return []
+    return geo.rivers_on_path(route["coords"])
+
+
 def _check_plan(decision: str, urgency: str, primary_id: str, backup_id: str) -> None:
     """計画を保存する前に、コードで確かめる（モデルの判断ミスを差し戻す）。
     - 避難行動の種類・緊急度が決めた値か、立ち退き避難なら避難先があるか
@@ -104,6 +125,9 @@ def _check_plan(decision: str, urgency: str, primary_id: str, backup_id: str) ->
     - 避難先がその災害に対して使えるか（危険な区域の中・河川敷・洪水で川を渡る、を弾く）。
       ただし、起点の近くに使える避難所が1つもない場合は、ほかに選びようがないので通す
     - 屋外の場所を第一避難先にするのは、屋内の安全な避難所がそれより1km以上遠いときだけ
+    - 洪水では、直線では同じ岸でも、道路に沿った経路が橋で川を渡る避難先は差し戻す。
+      ただし、道路でも川を渡らない（またはまだ経路を調べていない）候補がほかに残っているときだけ。
+      候補を調べ尽くしてどれも川を渡るなら通す（差し戻しが続いて中止にならないように）
     """
     if decision not in DECISIONS:
         raise ValueError(f"decision は {DECISIONS} のいずれかにしてください")
@@ -140,6 +164,22 @@ def _check_plan(decision: str, urgency: str, primary_id: str, backup_id: str) ->
                     f"search_shelters の safe_for_{hazard} が true の避難所から選び直してください"
                 )
             continue
+        if hazard == "flood":
+            rivers = _road_rivers(sid)
+            if rivers:
+                routes = ctx().get("routes", {})
+                untried_or_dry = any(
+                    o["id"] != sid
+                    and _is_ok(o, hazard, lat, lng)
+                    and not (o["id"] in routes and not routes[o["id"]]["approximate"]
+                             and geo.rivers_on_path(routes[o["id"]]["coords"]))
+                    for _, o in nearby
+                )
+                if untried_or_dry:
+                    raise ValueError(
+                        f"{label}の{s['name']}へは、道路に沿った経路だと{'・'.join(rivers)}を橋で渡ります。"
+                        "洪水のときに増水した川を渡るのは危険です。estimate_route で川を渡らない経路の避難所を探して選び直してください"
+                    )
         if label == "第一避難先" and is_outdoor(s["name"]):
             # 屋外は一時的な避難場所。近くに屋内の安全な避難所があれば、そちらを第一避難先にする
             d_out = geo.distance_m(lat, lng, s["lat"], s["lng"])
@@ -370,10 +410,7 @@ def save_evacuation_plan(
         if not s:
             return None
         # 地図に描く経路の線。estimate_route で見積もった経路がなければ、ここで徒歩の経路を取る
-        route = state.get("routes", {}).get(sid)
-        origin = state["household"] or {}
-        if route is None and "lat" in origin:
-            route = geo.road_route(origin["lat"], origin["lng"], s["lat"], s["lng"], "walk")
+        route = _route_for(sid)
         path = geo.simplify_path(route["coords"]) if route and not route["approximate"] else None
         return {"id": sid, "city": s["city"], "name": s["name"], "lat": s["lat"], "lng": s["lng"], "path": path}
 

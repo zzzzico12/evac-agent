@@ -182,6 +182,40 @@ def test_road_route_is_used_for_plan():
         geo.road_route = original
 
 
+def test_plan_rejected_when_road_route_crosses_river():
+    """直線では同じ岸でも、道路に沿った経路が橋で川を渡る避難先は差し戻す。候補を調べ尽くしたら通す。"""
+    h = homes()["H003"]  # 青柳町（那珂川の北岸）
+    tsuda = geo.SHELTERS["S1098"]  # 津田コミュニティセンター（同じ岸）
+    gokenn = geo.SHELTERS["S0002"]  # 五軒小学校（対岸）
+    # 対岸を回って戻ってくる道路の経路（那珂川を2回渡る）
+    detour = [[h["lat"], h["lng"]], [gokenn["lat"], gokenn["lng"]], [tsuda["lat"], tsuda["lng"]]]
+    straight = lambda a, b, c, d, mode: {"distance_m": 1000, "duration_s": 900, "coords": [[a, b], [c, d]], "approximate": False}
+    original = geo.road_route
+    try:
+        geo.road_route = lambda a, b, c, d, mode: (
+            {"distance_m": 5000, "duration_s": 4000, "coords": detour, "approximate": False}
+            if (c, d) == (tsuda["lat"], tsuda["lng"]) else straight(a, b, c, d, mode))
+        start_run(h, {"hazard": "flood"})
+        bad = save(primary_shelter_id="S1098")
+        assert "橋で渡ります" in bad["error"] and "那珂川" in bad["error"]
+        # 同じ岸で、道路でも川を渡らない避難所なら保存できる
+        other = next(o["id"] for o in call(search_shelters, lat=h["lat"], lng=h["lng"], hazard="flood")["shelters"]
+                     if o["safe_for_flood"] and o["id"] != "S1098")
+        assert save(primary_shelter_id=other).get("saved")
+
+        # どの候補も道路では川を渡るとわかっているなら、通す（差し戻しが続いて中止にならない）
+        geo.road_route = lambda a, b, c, d, mode: {"distance_m": 5000, "duration_s": 4000, "approximate": False,
+                                                   "coords": [[a, b], [gokenn["lat"], gokenn["lng"]], [c, d]]}
+        start_run(h, {"hazard": "flood"})
+        import tools
+        for o in geo.SHELTERS.values():
+            if geo.distance_m(h["lat"], h["lng"], o["lat"], o["lng"]) <= tools.ALTERNATIVE_RADIUS_M:
+                tools._route_for(o["id"])
+        assert save(primary_shelter_id="S1098").get("saved")
+    finally:
+        geo.road_route = original
+
+
 def test_route_and_bad_mode():
     h = homes()["H003"]
     r = call(estimate_route, from_lat=h["lat"], from_lng=h["lng"], shelter_id="S0002", mode="walk_slow")
@@ -202,5 +236,6 @@ if __name__ == "__main__":
     test_landslide_plan_checks()
     test_input_validation()
     test_road_route_is_used_for_plan()
+    test_plan_rejected_when_road_route_crosses_river()
     test_route_and_bad_mode()
     print("tools OK")
