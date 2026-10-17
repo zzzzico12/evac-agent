@@ -199,7 +199,12 @@ function distanceM(a, b) {
   return 2 * R * Math.asin(Math.sqrt(x));
 }
 const formatDistance = (m) => (m < 1000 ? `${Math.round(m / 10) * 10}m` : `${(m / 1000).toFixed(1)}km`);
-const isSafe = (s) => HAZARDS[currentHazard()].isSafe(s);
+// 河川敷は川の中なので外す。公園・運動場などの屋外は、安全なら「一時的な避難場所」として屋内の後に出す（agent/tools.py と同じ判定）
+const OUTDOOR = /河川敷|運動場|公園|グラウンド|グランド|広場|緑地|球場|競技場|駐車場|校庭/;
+const INDOOR = /体育館|館|センター|ハウス|ホール/;
+const isOutdoor = (name) => OUTDOOR.test(name) && !INDOOR.test(name);
+const isRiverbed = (name) => name.includes('河川敷');
+const isSafe = (s) => !isRiverbed(s.name) && HAZARDS[currentHazard()].isSafe(s);
 
 // 2地点の間で渡らなければならない川。直線が川を奇数回横切るなら反対側にある（agent/geo.py と同じ考え方）
 function riversCrossed(a, b) {
@@ -232,11 +237,17 @@ function nearbyShelters(h, count = 3) {
   const flood = currentHazard() === 'flood';
   designated.forEach((s) => { s.rivers = flood ? riversCrossed(h, s) : []; });
   const ok = (s) => isSafe(s) && !s.rivers.length;
-  const safe = designated.filter(ok).slice(0, count);
+  // 屋内の安全な避難所を先に出し、足りなければ屋外の一時的な避難場所で埋める
+  const usable = designated.filter(ok);
+  const safe = [...usable.filter((s) => !isOutdoor(s.name)), ...usable.filter((s) => isOutdoor(s.name))].slice(0, count);
   const nearest = designated[0];
   // いちばん近い避難所が危険な区域にあるか川の対岸なら、あえて「使えない最寄り」として示す
   const unsafeNearest = nearest && !ok(nearest) && nearest.distance < (safe[0]?.distance ?? Infinity) ? nearest : null;
-  if (unsafeNearest) unsafeNearest.reason = isSafe(unsafeNearest) ? `${unsafeNearest.rivers.join('・')}の対岸` : HAZARDS[currentHazard()].unsafeText(unsafeNearest);
+  if (unsafeNearest) {
+    unsafeNearest.reason = isRiverbed(unsafeNearest.name)
+      ? '河川敷（川の中）'
+      : isSafe(unsafeNearest) ? `${unsafeNearest.rivers.join('・')}の対岸` : HAZARDS[currentHazard()].unsafeText(unsafeNearest);
+  }
   return { safe, unsafeNearest };
 }
 
@@ -271,7 +282,7 @@ function renderNearby() {
   const items = safe.map((s, i) => `
     <li data-id="${esc(s.id)}">
       <span class="num">${i + 1}</span>
-      <span class="body"><span class="name">${esc(s.name)}</span><span class="meta">${esc(s.city)}　${s.designated_shelter === '対応' ? '指定避難所' : '指定の有無は不明'}${s.welfare_shelter === '対応' ? '・福祉避難所' : ''}　${hz.safeText}</span></span>
+      <span class="body"><span class="name">${esc(s.name)}</span><span class="meta">${esc(s.city)}　${isOutdoor(s.name) ? '屋外（一時的な避難場所）' : s.designated_shelter === '対応' ? '指定避難所' : '指定の有無は不明'}${s.welfare_shelter === '対応' ? '・福祉避難所' : ''}　${hz.safeText}</span></span>
       <span class="dist">${formatDistance(s.distance)}</span>
     </li>`).join('');
   const warn = unsafeNearest ? `
@@ -500,7 +511,12 @@ async function runAgent(h, alert) {
   } catch (err) {
     return fail(`通信できませんでした：${err.message}`);
   }
-  if (!res.ok || !res.body) return fail(`HTTP ${res.status} ${await res.text().catch(() => '')}`);
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    let message = `HTTP ${res.status}`;
+    try { message = JSON.parse(text).error || message; } catch { /* JSON でなければ HTTP の状態だけ出す */ }
+    return fail(message);
+  }
 
   // AgentCore の SSE（"data: {...}\n\n"）を1件ずつ取り出す
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();

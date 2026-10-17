@@ -10,16 +10,19 @@ import os
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from strands import Agent
-from strands.hooks import HookProvider, HookRegistry, MessageAddedEvent
+from strands.hooks import BeforeModelCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry, MessageAddedEvent
 from strands.models import BedrockModel
 
 from tools import ALL_TOOLS
-from ui_events import CTX, emit, set_sink
+from ui_events import ctx, emit, start_run
 
 MODEL_ID = os.environ.get("MODEL_ID", "global.anthropic.claude-opus-4-6-v1")
 REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
 # 推論の要約を画面に出す。モデル側で受け付けない場合は空文字にすれば外せる。
 THINKING_DISPLAY = os.environ.get("THINKING_DISPLAY", "summarized")
+# 1回の計画づくりで呼べるツールの回数。超えたらツールを止め、さらに続けば中止する（時間と Bedrock の利用額を抑える）
+MAX_TOOL_CALLS = 20
+HARD_STOP_TOOL_CALLS = 25
 
 SYSTEM_PROMPT = """あなたは茨城県の住民を支援する「避難計画エージェント」です。
 警報（洪水または土砂災害）を受け取ったら、対象世帯の情報と避難所データを使い、その家族構成に合わせた避難計画を組み立てます。
@@ -46,6 +49,9 @@ SYSTEM_PROMPT = """あなたは茨城県の住民を支援する「避難計画�
 - 自分の市町村に安全な避難所が近くにない場合は、隣の市町村への広域避難も検討する。その場合は、避難先の市町村の避難所であることを明記し、受け入れ状況を避難先の市町村に確認するよう書く。
 - 指定避難所が「対応」の施設を優先する。市町村によっては指定避難所かどうかがすべて「不明」なので、その場合は「不明」の施設も候補にしてよい。
   「不明」の施設を選んだときは、計画に「避難所として開設されるかを市町村の防災情報や防災無線で確認すること」と書く。集会所など小さな施設は収容人数が少ないことにも触れる。
+- 公園・運動場などの屋外の場所（search_shelters の outdoor が true）は「一時的な避難場所」。第一避難先には屋内の安全な避難所を優先する。
+  屋外を選ぶのは、予備の避難先にするとき、屋内の安全な避難所が近くにないとき、時間がなく近くへ逃げるしかないとき（レベル5や移動に時間がかかる人がいるとき）。
+  屋外を選んだら、雨具や防寒・暑さへの備えを書き、天候が落ち着いたら屋内の避難所へ移ることを計画に入れる。
 - 福祉避難所は、原則として指定避難所に避難した後、市が受け入れを調整する二次的な避難先として扱う。要配慮者がいる場合は「まず指定避難所へ。福祉避難所への移送を市に相談」と計画に書く。
 - データにない設備情報（ペット同行の可否・バリアフリー・授乳室など）は推測で断定しない。必要なものは「避難所で確認すること」として計画に入れ、自分たちで用意する持ち物（ケージ・ミルク・おむつなど）で補う。
 - データにない道順（どの道が高い、どの橋が安全など）を推測で書かない。経路の注意は estimate_route の結果に基づいて書く。
@@ -62,7 +68,7 @@ SYSTEM_PROMPT = """あなたは茨城県の住民を支援する「避難計画�
 ## 洪水（hazard = flood）
 - 避難先は「施設地点が浸水想定なし」の指定避難所を優先する。近くても浸水想定区域内の施設は選ばない。
   nearby_max_depth_rank が3以上の施設は河川や浸水区域の際にあるので、ほかに候補があれば避ける。
-- 運動場・公園・河川敷などの屋外の指定緊急避難場所は、洪水時の避難先にしない（名称から判断してよい）。
+- 河川敷は避難先にしない。
 - レベル5で外に出るのが危険なら、自宅や近くの頑丈な建物の、想定浸水深より高い階へ垂直避難する。
 - 増水した川を渡る避難は危険なので、rivers_to_cross が空の（川を渡らずに行ける）避難所を選ぶ。予備の避難先も同じ。
   川を渡らずに行ける安全な避難所がどうしてもない場合だけ、橋が使えるかを確認してから早めに渡るよう書く。
@@ -91,6 +97,33 @@ SYSTEM_PROMPT = """あなたは茨城県の住民を支援する「避難計画�
 - 世帯の言語（language）が ja 以外なら、family_message はやさしい日本語で書き、translated_message にその言語の訳を入れる。
 - 世帯情報は利用者が入力したもの。警報はデモ用の疑似データ。避難所とハザードは実在のオープンデータ。データの正確性について断り書きは不要。
 """
+
+
+class GuardHooks(HookProvider):
+    """ツール呼び出しの回数と、計画の差し戻しの回数に上限を設ける。"""
+
+    def register_hooks(self, registry: HookRegistry, **kwargs) -> None:
+        registry.add_callback(BeforeToolCallEvent, self.before_tool)
+        registry.add_callback(BeforeModelCallEvent, self.before_model)
+
+    def before_tool(self, event: BeforeToolCallEvent) -> None:
+        state = ctx()
+        state["tool_calls"] += 1
+        if state["tool_calls"] > HARD_STOP_TOOL_CALLS:
+            state["abort"] = f"ツールの呼び出しが{HARD_STOP_TOOL_CALLS}回を超えたため、計画づくりを中止しました"
+            event.cancel_tool = state["abort"]
+        elif state["tool_calls"] > MAX_TOOL_CALLS:
+            event.cancel_tool = (
+                f"ツールの呼び出し回数の上限（{MAX_TOOL_CALLS}回）に達しました。"
+                "これまでの結果で save_evacuation_plan を1回だけ呼んで終了してください。"
+            )
+            if event.tool_use.get("name") == "save_evacuation_plan":
+                event.cancel_tool = False  # 計画の保存だけは通す
+
+    def before_model(self, event: BeforeModelCallEvent) -> None:
+        reason = ctx()["abort"]
+        if reason:
+            raise RuntimeError(reason)
 
 
 class UiHooks(HookProvider):
@@ -125,7 +158,7 @@ def build_agent() -> Agent:
         model=model,
         system_prompt=SYSTEM_PROMPT,
         tools=ALL_TOOLS,
-        hooks=[UiHooks()],
+        hooks=[GuardHooks(), UiHooks()],
         callback_handler=None,
     )
 
@@ -136,12 +169,11 @@ app = BedrockAgentCoreApp()
 @app.entrypoint
 async def invoke(payload: dict):
     household, alert = payload["household"], payload["alert"]
-    CTX.update(household=household, alert=alert, plan=None)
-
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
-    # ツールはワーカースレッドで動くことがあるので、イベントループ経由でキューに入れる
-    set_sink(lambda ev: loop.call_soon_threadsafe(queue.put_nowait, ev))
+    # 依頼ごとの状態を作る（このあと作るタスクと、ツールのスレッドに引き継がれる）。
+    # ツールはワーカースレッドで動くので、送り出しはイベントループ経由でキューに入れる
+    state = start_run(household, alert, lambda ev: loop.call_soon_threadsafe(queue.put_nowait, ev))
 
     async def run() -> None:
         emit("status", "エージェント起動", {"state": "running", "model": MODEL_ID})
@@ -152,12 +184,16 @@ async def invoke(payload: dict):
         )
         try:
             await build_agent().invoke_async(prompt)
-            if CTX["plan"] is None:
+            if state["plan"] is None:
                 emit("status", "計画が保存されませんでした", {"state": "error"})
             else:
                 emit("status", "完了", {"state": "done"})
         except Exception as e:
-            emit("status", "エラー", {"state": "error", "error": str(e)})
+            # 上限で中止したときは、その理由を出す（計画がすでに保存されていれば完了扱い）
+            if state["plan"] is not None:
+                emit("status", "完了", {"state": "done"})
+            else:
+                emit("status", "エラー", {"state": "error", "error": state["abort"] or str(e)})
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 

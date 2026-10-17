@@ -1,23 +1,39 @@
-"""エージェントの進行状況（思考・ツール呼び出し・計画）を、呼び出し元へストリーミングで返す。
+"""1回の依頼（計画の作成）ごとの実行状態と、進行状況（思考・ツール呼び出し・計画）の送り出し。
 
-保存はしない。main.py が送り先（sink）を差し込み、AgentCore Runtime の SSE レスポンスとして流す。
+状態は contextvars で依頼ごとに分ける。Strands は同期のツールを asyncio.to_thread で動かすので、
+ツールのスレッドにも同じ状態が引き継がれる。保存はしない（SSE で呼び出し元へ流すだけ）。
 """
 
 import itertools
 import time
+from contextvars import ContextVar
 
-_seq = itertools.count()
-_sink = print
-
-# AgentCore Runtime はセッションごとに microVM が分かれるため、
-# 1プロセス = 1世帯の実行として扱う。
-CTX: dict = {"household": None, "alert": None, "plan": None}
+_run: ContextVar[dict] = ContextVar("evac_run")
 
 
-def set_sink(fn) -> None:
-    global _sink
-    _sink = fn
+def start_run(household: dict | None, alert: dict | None, sink=print) -> dict:
+    """依頼の開始時に呼ぶ。以降、同じコンテキスト（とそこから作ったタスク・スレッド）で ctx() が使える。"""
+    state = {
+        "household": household,
+        "alert": alert,
+        "plan": None,
+        "sink": sink,
+        "seq": itertools.count(),
+        "tool_calls": 0,  # ツール呼び出しの回数
+        "rejections": 0,  # 計画の保存を差し戻した回数
+        "abort": None,  # 中止する理由（入っていたら次のモデル呼び出しで止める）
+    }
+    _run.set(state)
+    return state
+
+
+def ctx() -> dict:
+    state = _run.get(None)
+    if state is None:  # テストやローカルでの直接呼び出し用
+        state = start_run(None, None)
+    return state
 
 
 def emit(kind: str, title: str, body=None) -> None:
-    _sink({"seq": next(_seq), "ts": int(time.time() * 1000), "kind": kind, "title": title, "body": body})
+    state = ctx()
+    state["sink"]({"seq": next(state["seq"]), "ts": int(time.time() * 1000), "kind": kind, "title": title, "body": body})

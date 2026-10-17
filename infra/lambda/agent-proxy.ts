@@ -139,22 +139,39 @@ export const handler = awslambda.streamifyResponse(async (event, stream) => {
     return reply(stream, 400, { error: message });
   }
 
-  const res = await client.send(
-    new InvokeAgentRuntimeCommand({
-      agentRuntimeArn: RUNTIME_ARN,
-      runtimeSessionId: `${alert.alertId}-${household.id}-${randomUUID()}`, // 33文字以上が必要
-      contentType: 'application/json',
-      accept: 'text/event-stream',
-      payload: Buffer.from(JSON.stringify({ household, alert })),
-    }),
-  );
+  // AgentCore の呼び出しに失敗したら、理由を JSON で返す（混雑による拒否など）
+  let res;
+  try {
+    res = await client.send(
+      new InvokeAgentRuntimeCommand({
+        agentRuntimeArn: RUNTIME_ARN,
+        runtimeSessionId: `${alert.alertId}-${household.id}-${randomUUID()}`, // 33文字以上が必要
+        contentType: 'application/json',
+        accept: 'text/event-stream',
+        payload: Buffer.from(JSON.stringify({ household, alert })),
+      }),
+    );
+  } catch (err: any) {
+    console.error('InvokeAgentRuntime failed', err?.name, err?.message); // 入力内容はログに出さない
+    const busy = err?.name === 'ThrottlingException' || err?.name === 'ServiceQuotaExceededException';
+    return reply(stream, busy ? 503 : 502, {
+      error: busy ? '混み合っているため、計画を作れませんでした。少し待ってからやり直してください。' : 'エージェントを呼び出せませんでした。',
+    });
+  }
 
   const out = awslambda.HttpResponseStream.from(stream, {
     statusCode: 200,
     headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
   });
-  for await (const chunk of res.response as AsyncIterable<Uint8Array>) {
-    out.write(chunk);
+  try {
+    for await (const chunk of res.response as AsyncIterable<Uint8Array>) {
+      out.write(chunk);
+    }
+  } catch (err: any) {
+    // 途中で切れたら、画面がエラーとして表示できる形で知らせる
+    console.error('stream interrupted', err?.name, err?.message);
+    const ev = { kind: 'status', title: 'エラー', body: { state: 'error', error: 'エージェントとの通信が途中で切れました。' }, ts: Date.now() };
+    out.write(`data: ${JSON.stringify(ev)}\n\n`);
   }
   out.end();
 });
