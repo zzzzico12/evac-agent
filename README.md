@@ -31,25 +31,7 @@
 
 ## 仕組み
 
-```
- ┌──────────────── PWA（S3 + CloudFront）────────────────┐
- │ 場所・家族の情報と避難計画は端末の localStorage に保存    │
- │ Service Worker で画面・避難所データ・地図をキャッシュ     │
- └──┬───────────────────────────────┬───────────────▲────┘
-    │① 警報を取得                      │② 場所の情報＋警報  │③ 進み具合と計画を
-    ▼                                 ▼                 │   ストリーミング（SSE）
-  data/alerts.json（疑似警報）        [CloudFront /api/agent]
-                                        │ OAC（署名付きで呼び出し）
-                                      [Lambda: agent-proxy]
-                                      Function URL（IAM 認証・RESPONSE_STREAM）
-                                        │ InvokeAgentRuntime
-                                        ▼
-                         [Bedrock AgentCore Runtime: Strands Agents]
-                          ├─ Claude（Amazon Bedrock）
-                          ├─ 道路に沿った経路（Amazon Location Service の Routes API）
-                          └─ ツール：世帯情報・災害リスク判定・避難所検索・経路の見積もり・計画の保存
-                             （避難所＝茨城県オープンデータ、ハザード＝国土地理院、河川＝OpenStreetMap）
-```
+![構成図](docs/architecture.png)
 
 1. 画面で災害の種類と警戒レベルを選び、疑似警報を読み込みます。
 2. 選んでいる場所の情報と警報を、画面と同じドメインの `/api/agent` に送ります。CloudFront が OAC で agent-proxy（Lambda）を呼び出します。
@@ -176,7 +158,8 @@
 | `infra/` | AWS CDK（TypeScript）。`lambda/agent-proxy.ts` は AgentCore の呼び出しを中継する Lambda |
 | `frontend/` | PWA（Leaflet、`manifest.webmanifest`、`sw.js`、アイコン） |
 | `data/` | 疑似警報・避難所・河川・市町村コードのデータ |
-| `scripts/` | データの作成（避難所・河川）とアイコンの生成 |
+| `scripts/` | データの作成（避難所・河川）、アイコンと構成図の生成 |
+| `docs/` | 構成図（`architecture.svg` / `architecture.png`） |
 
 ## デプロイ
 
@@ -265,6 +248,7 @@ jq -n --slurpfile h tests/fixtures/households.json \
 agent/.venv/bin/python scripts/prepare_shelters.py   # 避難所データの取得とハザードの付与（数分）
 agent/.venv/bin/python scripts/prepare_rivers.py     # 河川の流路の取得と簡略化
 agent/.venv/bin/python scripts/draw_icons.py         # PWA のアイコン
+python3 scripts/draw_architecture.py <AWS Architecture Icons のフォルダ>   # 構成図（docs/architecture.svg）
 ```
 
 `frontend/sw.js` の `VERSION` を上げると、インストール済みの端末でもキャッシュが更新されます。
