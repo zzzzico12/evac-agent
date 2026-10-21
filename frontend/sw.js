@@ -1,5 +1,5 @@
 // オフラインでも、保存済みの避難計画・避難所データ・見たことのある地図を表示できるようにする
-const VERSION = 'evac-v21';
+const VERSION = 'evac-v22';
 const SHELL = [
   './',
   'index.html',

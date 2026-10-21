@@ -326,6 +326,12 @@ function drawRoute() {
       .addTo(layers.route);
     pts.push([plan.primary_shelter.lat, plan.primary_shelter.lng]);
   }
+  // 経路が通るアンダーパス（大雨で冠水しやすい場所）
+  for (const u of plan.primary_shelter?.underpasses ?? []) {
+    L.circleMarker([u.lat, u.lng], { radius: 6, color: '#b45309', weight: 2.5, fillColor: '#fde68a', fillOpacity: 1 })
+      .bindTooltip(`アンダーパス${u.name ? `（${esc(u.name)}）` : ''}：冠水していたら通らない`)
+      .addTo(layers.route);
+  }
   if (pts.length > 1) map.flyToBounds(pts, { padding: [60, 60], duration: 0.8, maxZoom: 15 });
   else map.flyTo([h.lat, h.lng], 15, { duration: 0.6 });
 }

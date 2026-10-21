@@ -39,7 +39,7 @@ function agentCodeAsset(): agentcore.AgentRuntimeArtifact {
             fs.copyFileSync(path.join(agentDir, f), path.join(outputDir, f));
           }
           fs.mkdirSync(path.join(outputDir, 'data'), { recursive: true });
-          for (const f of ['shelters.json', 'rivers.json']) {
+          for (const f of ['shelters.json', 'rivers.json', 'underpasses.json']) {
             fs.copyFileSync(path.join(ROOT, 'data', f), path.join(outputDir, 'data', f));
           }
           return true;

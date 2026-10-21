@@ -172,7 +172,7 @@ def main(pkg: Path) -> None:
     # ---- AWS の外のデータ ----
     ex, ew = 1350, 320
     parts.append(f'<text x="{ex}" y="196" font-size="14" font-weight="700" fill="{INK}">AWS の外のデータ</text>')
-    osm, h1 = external(ex, 210, ew, "OpenStreetMap", ["主な19河川の流路（ODbL）", "→ data/rivers.json に加工"])
+    osm, h1 = external(ex, 210, ew, "OpenStreetMap", ["主な19河川の流路・アンダーパス（ODbL）", "→ data/rivers.json・underpasses.json"])
     ibk, h2 = external(ex, 210 + h1 + 16, ew, "茨城県 避難施設情報", ["2,378件（N2EM / G空間情報センター）", "→ ハザードを付けて data/shelters.json"])
     gy = 525
     gsi, h3 = external(ex, gy, ew, "国土地理院", ["重ねるハザードマップ（浸水想定・", "土砂災害警戒区域）のタイル", "地図・住所検索・逆ジオコーダー"])

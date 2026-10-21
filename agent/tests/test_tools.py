@@ -216,6 +216,80 @@ def test_plan_rejected_when_road_route_crosses_river():
         geo.road_route = original
 
 
+def _akatsuka():
+    return next(u for u in geo.UNDERPASSES if u["name"] == "赤塚駅西線アンダーパス")
+
+
+def test_underpass_data():
+    assert len(geo.UNDERPASSES) > 500
+    # 山を抜けるトンネルや共同溝は入れていない
+    assert not any("トンネル" in u["name"] or "共同溝" in u["name"] for u in geo.UNDERPASSES)
+
+
+def test_underpass_on_path():
+    (lat1, lng1), (lat2, lng2) = _akatsuka()["coords"][0], _akatsuka()["coords"][-1]
+    dlat, dlng = lat2 - lat1, lng2 - lng1
+    # アンダーパスの中を通り抜ける経路
+    through = [[lat1 - dlat, lng1 - dlng], [lat2 + dlat, lng2 + dlng]]
+    assert _akatsuka()["id"] in [u["id"] for u in geo.underpasses_on_path(through)]
+    # アンダーパスの上を横切るだけの経路（向きが直交する）
+    mlat, mlng = (lat1 + lat2) / 2, (lng1 + lng2) / 2
+    over = [[mlat - dlng, mlng - dlat * 2], [mlat + dlng, mlng + dlat * 2]]
+    assert _akatsuka()["id"] not in [u["id"] for u in geo.underpasses_on_path(over)]
+
+
+def test_road_route_avoids_underpass():
+    """最短の経路がアンダーパスを通るときは避ける経路を使う。遠回りが大きすぎるときは最短のまま注意を出す。"""
+    u = _akatsuka()
+    (lat1, lng1), (lat2, lng2) = u["coords"][0], u["coords"][-1]
+    dlat, dlng = lat2 - lat1, lng2 - lng1
+    through = [[lat1 - dlat, lng1 - dlng], [lat2 + dlat, lng2 + dlng]]
+    around = [through[0], [lat1, lng1 + 0.003], through[1]]
+    calls = []
+
+    def fake(a, b, c, d, mode, avoid=None):
+        calls.append(avoid)
+        if avoid:
+            return {"distance_m": 1200, "duration_s": 900 + extra, "coords": around, "approximate": False}
+        return {"distance_m": 900, "duration_s": 900, "coords": through, "approximate": False}
+
+    original = geo._calculate, geo.ROUTES_ENABLED
+    try:
+        geo._calculate, geo.ROUTES_ENABLED = fake, True
+        extra = 300
+        geo.road_route.cache_clear()
+        r = geo.road_route(*through[0], *through[1], "walk")
+        assert r["coords"] == around and r["detour_s"] == 300 and not r["underpasses"]
+        assert [x["id"] for x in r["avoided_underpasses"]] == [u["id"]] and calls[-1][0]["id"] == u["id"]
+        extra = 3600
+        geo.road_route.cache_clear()
+        r = geo.road_route(*through[0], *through[1], "walk")
+        assert r["coords"] == through and [x["id"] for x in r["underpasses"]] == [u["id"]] and not r["avoided_underpasses"]
+    finally:
+        geo._calculate, geo.ROUTES_ENABLED = original
+        geo.road_route.cache_clear()
+
+
+def test_underpass_warning_and_plan_marker():
+    h = homes()["H003"]
+    s = geo.SHELTERS["S1098"]
+    info = {"id": 1, "name": "赤塚駅西線アンダーパス", "lat": 36.38, "lng": 140.4}
+    original = geo.road_route
+    try:
+        geo.road_route = lambda a, b, c, d, mode: {
+            "distance_m": 2000, "duration_s": 1800, "coords": [[a, b], [c, d]], "approximate": False,
+            "underpasses": [info], "avoided_underpasses": [dict(info, id=2, name="")], "detour_s": 240}
+        start_run(h, {"hazard": "flood"})
+        r = call(estimate_route, from_lat=h["lat"], from_lng=h["lng"], shelter_id="S1098", mode="car")
+        assert r["underpasses_on_route"] == 1 and r["underpasses_avoided"] == 1
+        assert any("アンダーパス（赤塚駅西線アンダーパス）を通る" in w and "車は特に" in w for w in r["warnings"])
+        assert any("1か所）を避けた経路" in w and "約4分長い" in w for w in r["warnings"])
+        assert save(primary_shelter_id="S1098").get("saved")
+        assert ctx()["plan"]["primary_shelter"]["underpasses"] == [{"name": info["name"], "lat": 36.38, "lng": 140.4}]
+    finally:
+        geo.road_route = original
+
+
 def test_route_and_bad_mode():
     h = homes()["H003"]
     r = call(estimate_route, from_lat=h["lat"], from_lng=h["lng"], shelter_id="S0002", mode="walk_slow")
@@ -237,5 +311,9 @@ if __name__ == "__main__":
     test_input_validation()
     test_road_route_is_used_for_plan()
     test_plan_rejected_when_road_route_crosses_river()
+    test_underpass_data()
+    test_underpass_on_path()
+    test_road_route_avoids_underpass()
+    test_underpass_warning_and_plan_marker()
     test_route_and_bad_mode()
     print("tools OK")

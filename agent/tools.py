@@ -302,8 +302,9 @@ MODE_LABEL = {"walk": "徒歩", "walk_slow": "ゆっくり徒歩", "wheelchair":
 @ui_tool("避難経路を見積もり")
 def estimate_route(from_lat: float, from_lng: float, shelter_id: str, mode: str) -> dict:
     """出発地から避難所までの、道路に沿った経路（Amazon Location Service）の距離・所要時間と、
-    その経路が浸水想定区域・土砂災害警戒区域を通る割合、橋で渡る川を見積もる。
-    災害時の通行止めや冠水は反映されない。
+    その経路が浸水想定区域・土砂災害警戒区域を通る割合、橋で渡る川、通るアンダーパスを見積もる。
+    冠水しやすいアンダーパスは、遠回りが大きすぎなければ避けた経路にする。
+    災害時の通行止めや、いま冠水している場所は反映されない。
 
     Args:
         from_lat: 出発地の緯度
@@ -338,6 +339,18 @@ def estimate_route(from_lat: float, from_lng: float, shelter_id: str, mode: str)
             f"経路の約{int(exposure['ratio_in_landslide_zone'] * 100)}%が{exposure['max_landslide_zone']}を通る。"
             "崖や沢のそばの道はできるだけ避けること"
         )
+    underpasses = route.get("underpasses", [])
+    avoided = route.get("avoided_underpasses", [])
+    if avoided:
+        warnings.append(
+            f"冠水しやすいアンダーパス（{_underpass_names(avoided)}）を避けた経路。"
+            f"最短の経路より約{max(round(route['detour_s'] / 60), 1)}分長い"
+        )
+    if underpasses:
+        warnings.append(
+            f"この経路はアンダーパス（{_underpass_names(underpasses)}）を通る。大雨で冠水しやすく、"
+            "水がたまっていたら入らずに引き返すこと" + ("。車は特に、冠水したアンダーパスに入ると動けなくなる" if mode == "car" else "")
+        )
     if mode == "car":
         warnings.append("道路が冠水（水深30cm以上）すると車は走行不能。早めの出発が前提")
     return {
@@ -350,8 +363,20 @@ def estimate_route(from_lat: float, from_lng: float, shelter_id: str, mode: str)
         "route_max_depth": exposure["max_depth"],
         "route_landslide_zone": exposure["max_landslide_zone"],
         "rivers_to_cross": rivers,
+        "underpasses_on_route": len(underpasses),
+        "underpasses_avoided": len(avoided),
         "warnings": warnings,
     }
+
+
+def _underpass_names(items: list[dict]) -> str:
+    """アンダーパスの名前（名前がないものは数で）。"""
+    names = list(dict.fromkeys(u["name"] for u in items if u["name"]))
+    unnamed = sum(1 for u in items if not u["name"])
+    parts = names[:3] + ([f"ほか{len(names) - 3}か所"] if len(names) > 3 else [])
+    if unnamed:
+        parts.append(f"{'名前のないもの' if parts else ''}{unnamed}か所")
+    return "・".join(parts)
 
 
 @tool
@@ -412,7 +437,8 @@ def save_evacuation_plan(
         # 地図に描く経路の線。estimate_route で見積もった経路がなければ、ここで徒歩の経路を取る
         route = _route_for(sid)
         path = geo.simplify_path(route["coords"]) if route and not route["approximate"] else None
-        return {"id": sid, "city": s["city"], "name": s["name"], "lat": s["lat"], "lng": s["lng"], "path": path}
+        underpasses = [{"name": u["name"], "lat": u["lat"], "lng": u["lng"]} for u in (route or {}).get("underpasses", [])]
+        return {"id": sid, "city": s["city"], "name": s["name"], "lat": s["lat"], "lng": s["lng"], "path": path, "underpasses": underpasses}
 
     plan = {
         "decision": decision,

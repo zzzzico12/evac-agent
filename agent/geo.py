@@ -83,6 +83,23 @@ def _load_rivers() -> list[dict]:
 RIVERS = _load_rivers()
 
 
+def _load_underpasses() -> list[dict]:
+    """アンダーパス（線路や道路の下をくぐる道。OpenStreetMap）。大雨のときに冠水しやすい場所として使う。"""
+    path = DATA_DIR / "underpasses.json"
+    if not path.exists():
+        return []
+    items = json.loads(path.read_text(encoding="utf-8"))["underpasses"]
+    for u in items:
+        lats = [c[0] for c in u["coords"]]
+        lngs = [c[1] for c in u["coords"]]
+        u["bbox"] = (min(lats), min(lngs), max(lats), max(lngs))
+        u["center"] = [round(sum(lats) / len(lats), 6), round(sum(lngs) / len(lngs), 6)]
+    return items
+
+
+UNDERPASSES = _load_underpasses()
+
+
 def _cross(o, a, b) -> float:
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
 
@@ -241,44 +258,123 @@ def _client():
     return _routes_client
 
 
+# アンダーパスを避ける経路は、最短の経路よりこれ以上長くかかるなら使わない（遠回りで逃げ遅れないように）
+UNDERPASS_DETOUR_MAX_S = 10 * 60
+UNDERPASS_DETOUR_MAX_RATIO = 0.3
+UNDERPASS_AVOID_RADIUS_M = 10
+UNDERPASS_AVOID_MAX = 20  # 避ける範囲として一度に指定するアンダーパスの数
+
+
+def _calculate(lat1: float, lng1: float, lat2: float, lng2: float, mode: str, avoid: list | None = None) -> dict:
+    speed = SPEED_KMH[mode]
+    travel = _TRAVEL_MODE[mode]
+    options = {"Pedestrian": {"Speed": min(speed, 7.2)}} if travel == "Pedestrian" else {}
+    extra = {}
+    if avoid:
+        # アンダーパスの線に沿った細い帯を避ける（その上を横切る道もふさがないよう、幅は小さくする）
+        extra["Avoid"] = {"Areas": [
+            {"Geometry": {"Corridor": {"LineString": [[lng, lat] for lat, lng in u["coords"]], "Radius": UNDERPASS_AVOID_RADIUS_M}}}
+            for u in avoid
+        ]}
+    res = _client().calculate_routes(
+        Origin=[lng1, lat1],
+        Destination=[lng2, lat2],
+        TravelMode=travel,
+        TravelModeOptions=options,
+        LegGeometryFormat="Simple",
+        LegAdditionalFeatures=["Summary"],
+        **extra,
+    )
+    coords, distance, duration = [], 0.0, 0.0
+    for leg in res["Routes"][0]["Legs"]:
+        coords += [[round(lat, 6), round(lng, 6)] for lng, lat in leg["Geometry"]["LineString"]]
+        overview = leg.get(f"{leg['Type']}LegDetails", {}).get("Summary", {}).get("Overview", {})
+        distance += overview.get("Distance", 0)
+        duration += overview.get("Duration", 0)
+    if mode == "bicycle" or not duration:
+        duration = distance / 1000 / speed * 3600
+    elif mode == "car":
+        # 避難のときは渋滞するので、渋滞を見込んだ速さより速くは見積もらない
+        duration = max(duration, distance / 1000 / speed * 3600)
+    return {"distance_m": distance, "duration_s": duration, "coords": coords, "approximate": False}
+
+
 @lru_cache(maxsize=256)
 def road_route(lat1: float, lng1: float, lat2: float, lng2: float, mode: str) -> dict:
-    """道路に沿った経路の距離・所要時間・経路の線（[緯度, 経度] の並び）。
+    """道路に沿った経路の距離・所要時間・経路の線（[緯度, 経度] の並び）と、経路が通るアンダーパス。
+    最短の経路がアンダーパスを通るときは、そこを避ける経路も取り、遠回りが大きすぎなければそちらを使う
+    （avoided_underpasses に避けたもの、detour_s に増えた時間）。
     取得できないときは直線で代わりに見積もり、approximate を True にする。"""
     speed = SPEED_KMH[mode]
     if ROUTES_ENABLED:
         try:
-            travel = _TRAVEL_MODE[mode]
-            options = {"Pedestrian": {"Speed": min(speed, 7.2)}} if travel == "Pedestrian" else {}
-            res = _client().calculate_routes(
-                Origin=[lng1, lat1],
-                Destination=[lng2, lat2],
-                TravelMode=travel,
-                TravelModeOptions=options,
-                LegGeometryFormat="Simple",
-                LegAdditionalFeatures=["Summary"],
-            )
-            coords, distance, duration = [], 0.0, 0.0
-            for leg in res["Routes"][0]["Legs"]:
-                coords += [[round(lat, 6), round(lng, 6)] for lng, lat in leg["Geometry"]["LineString"]]
-                overview = leg.get(f"{leg['Type']}LegDetails", {}).get("Summary", {}).get("Overview", {})
-                distance += overview.get("Distance", 0)
-                duration += overview.get("Duration", 0)
-            if mode == "bicycle" or not duration:
-                duration = distance / 1000 / speed * 3600
-            elif mode == "car":
-                # 避難のときは渋滞するので、渋滞を見込んだ速さより速くは見積もらない
-                duration = max(duration, distance / 1000 / speed * 3600)
-            return {"distance_m": distance, "duration_s": duration, "coords": coords, "approximate": False}
+            route = _calculate(lat1, lng1, lat2, lng2, mode)
         except Exception as e:  # 経路が取れなくても計画づくりは続ける
             print(f"road_route failed: {type(e).__name__}: {e}")
+        else:
+            on_path = underpasses_on_path(route["coords"])
+            route.update(underpasses=on_path, avoided_underpasses=[], detour_s=0)
+            if on_path:
+                try:
+                    alt = _calculate(lat1, lng1, lat2, lng2, mode, avoid=on_path[:UNDERPASS_AVOID_MAX])
+                except Exception as e:  # 避ける経路が取れなければ、最短の経路のまま注意を出す
+                    print(f"road_route (avoid underpasses) failed: {type(e).__name__}: {e}")
+                else:
+                    alt_on_path = underpasses_on_path(alt["coords"])
+                    detour = alt["duration_s"] - route["duration_s"]
+                    limit = max(UNDERPASS_DETOUR_MAX_S, route["duration_s"] * UNDERPASS_DETOUR_MAX_RATIO)
+                    if len(alt_on_path) < len(on_path) and detour <= limit:
+                        remaining = {u["id"] for u in alt_on_path}
+                        alt.update(
+                            underpasses=alt_on_path,
+                            avoided_underpasses=[u for u in on_path if u["id"] not in remaining],
+                            detour_s=max(detour, 0),
+                        )
+                        route = alt
+            route["underpasses"] = [_underpass_info(u) for u in route["underpasses"]]
+            route["avoided_underpasses"] = [_underpass_info(u) for u in route["avoided_underpasses"]]
+            return route
     distance = distance_m(lat1, lng1, lat2, lng2) * ROAD_FACTOR
     return {
         "distance_m": distance,
         "duration_s": distance / 1000 / speed * 3600,
         "coords": [[lat1, lng1], [lat2, lng2]],
         "approximate": True,
+        "underpasses": [],
+        "avoided_underpasses": [],
+        "detour_s": 0,
     }
+
+
+def _underpass_info(u: dict) -> dict:
+    return {"id": u["id"], "name": u["name"], "lat": u["center"][0], "lng": u["center"][1]}
+
+
+def _xy_m(lat: float, lng: float) -> tuple[float, float]:
+    return lng * 111_320 * math.cos(math.radians(36.3)), lat * 110_540
+
+
+def underpasses_on_path(coords: list, near_m: float = 12, min_share: float = 0.6) -> list[dict]:
+    """経路の線が通る（中をくぐる）アンダーパス。
+    アンダーパスに沿って並べた点の多くが経路のすぐそばにあれば、その中を通っているとみなす
+    （上の道や線路を横切るだけなら、近いのはアンダーパスの一部の点だけになる）。"""
+    if len(coords) < 2 or not UNDERPASSES:
+        return []
+    pts = [_xy_m(*p) for p in _resample(coords, step_m=8, max_points=2000)]
+    lats = [c[0] for c in coords]
+    lngs = [c[1] for c in coords]
+    pad = 0.0005  # 約50m
+    lo_lat, hi_lat, lo_lng, hi_lng = min(lats) - pad, max(lats) + pad, min(lngs) - pad, max(lngs) + pad
+    found = []
+    for u in UNDERPASSES:
+        y0, x0, y1, x1 = u["bbox"]
+        if y1 < lo_lat or y0 > hi_lat or x1 < lo_lng or x0 > hi_lng:
+            continue
+        samples = [_xy_m(*p) for p in _resample(u["coords"], step_m=5, max_points=50)]
+        near = sum(1 for sx, sy in samples if any(math.hypot(sx - px, sy - py) <= near_m for px, py in pts))
+        if near / len(samples) >= min_share:
+            found.append(u)
+    return found
 
 
 def _resample(coords: list, step_m: float = 50, max_points: int = 120) -> list:
